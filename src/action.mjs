@@ -5,14 +5,15 @@ import { context as eventContext, getOctokit } from '@actions/github'
 import lint from '@commitlint/lint'
 import { format } from '@commitlint/format'
 import load from '@commitlint/load'
-import gitCommits from './gitCommits'
-import generateOutputs from './generateOutputs'
+import generateOutputs from './generateOutputs.mjs'
 
+const mergeGroupEvent = 'merge_group'
 const pullRequestEvent = 'pull_request'
 const pullRequestTargetEvent = 'pull_request_target'
 const pullRequestEvents = [pullRequestEvent, pullRequestTargetEvent]
 
-const { GITHUB_EVENT_NAME, GITHUB_SHA } = process.env
+const { GITHUB_EVENT_NAME } = process.env
+const FIRST_COMMIT_SHA = '0000000000000000000000000000000000000000'
 
 const configPath = resolve(process.env.GITHUB_WORKSPACE, getInput('configFile'))
 
@@ -23,66 +24,70 @@ const getCommitDepth = () => {
   return Number.isNaN(commitDepth) ? null : Math.max(commitDepth, 0)
 }
 
-const pushEventHasOnlyOneCommit = (from) => {
-  const gitEmptySha = '0000000000000000000000000000000000000000'
+const getPushEventCommits = async () => {
+  const octokit = getOctokit(getInput('token'))
+  const { owner, repo } = eventContext.issue
+  const { before, after } = eventContext.payload
 
-  return from === gitEmptySha
-}
-
-const getRangeForPushEvent = () => {
-  let from = eventContext.payload.before
-  const to = GITHUB_SHA
-
-  if (eventContext.payload.forced) {
-    // When a commit is forced, "before" field from the push event data may point to a commit that doesn't exist
-    console.warn(
-      'Commit was forced, checking only the latest commit from push instead of a range of commit messages',
-    )
-    from = null
+  if (before === FIRST_COMMIT_SHA) {
+    return eventContext.payload.commits.map((commit) => ({
+      message: commit.message,
+      hash: commit.id,
+    }))
   }
 
-  if (pushEventHasOnlyOneCommit(from)) {
-    from = null
-  }
+  const { data: comparison } = await octokit.rest.repos.compareCommits({
+    owner,
+    repo,
+    head: after,
+    base: before,
+    per_page: 100,
+  })
 
-  return [from, to]
+  return comparison.commits.map((commit) => ({
+    message: commit.commit.message,
+    hash: commit.sha,
+  }))
 }
 
-const getRangeForEvent = async () => {
-  if (!pullRequestEvents.includes(GITHUB_EVENT_NAME))
-    return getRangeForPushEvent()
-
+const getPullRequestEventCommits = async () => {
   const octokit = getOctokit(getInput('token'))
   const { owner, repo, number } = eventContext.issue
   const { data: commits } = await octokit.rest.pulls.listCommits({
     owner,
     repo,
     pull_number: number,
+    per_page: 100,
   })
-  const commitShas = commits.map((commit) => commit.sha)
-  const [from] = commitShas
-  const to = commitShas[commitShas.length - 1]
-  // Git revision range doesn't include the "from" field in "git log", so for "from" we use the parent commit of PR's first commit
-  const fromParent = `${from}^1`
 
-  return [fromParent, to]
+  return commits.map((commit) => ({
+    message: commit.commit.message,
+    hash: commit.sha,
+  }))
 }
 
-function getHistoryCommits(from, to) {
-  const options = {
-    from,
-    to,
-  }
+const getMergeGroupEventCommits = async () => {
+  const { merge_group: mergeGroup } = eventContext.payload
 
-  if (getInput('firstParent') === 'true') {
-    options.firstParent = true
-  }
+  return [
+    {
+      message: mergeGroup.head_commit.message,
+      hash: mergeGroup.head_sha,
+    },
+  ]
+}
 
-  if (!from) {
-    options.maxCount = 1
+const getEventCommits = async () => {
+  if (GITHUB_EVENT_NAME === mergeGroupEvent) {
+    return getMergeGroupEventCommits()
   }
-
-  return gitCommits(options)
+  if (pullRequestEvents.includes(GITHUB_EVENT_NAME)) {
+    return getPullRequestEventCommits()
+  }
+  if (eventContext.payload.commits) {
+    return getPushEventCommits()
+  }
+  return []
 }
 
 function getOptsFromConfig(config) {
@@ -124,12 +129,19 @@ const handleOnlyWarnings = (formattedResults) => {
   }
 }
 
-const showLintResults = async ([from, to]) => {
-  let commits = await getHistoryCommits(from, to)
+const showLintResults = async (eventCommits) => {
+  let commits = eventCommits
   const commitDepth = getCommitDepth()
   if (commitDepth) {
     commits = commits?.slice(0, commitDepth)
   }
+
+  if (configPath?.endsWith('.js')) {
+    throw new Error(
+      '.js extension is not allowed for the `configFile`, please use .mjs instead',
+    )
+  }
+
   const config = existsSync(configPath)
     ? await load({}, { file: configPath })
     : await load({ extends: ['@commitlint/config-conventional'] })
@@ -145,6 +157,12 @@ const showLintResults = async ([from, to]) => {
 
   if (hasOnlyWarnings(lintedCommits)) {
     handleOnlyWarnings(formattedResults)
+  } else if (formattedResults && getInput('failOnErrors') === 'false') {
+    // https://github.com/actions/toolkit/tree/master/packages/core#exit-codes
+    // this would be a good place to implement the setNeutral() when it's eventually implimented.
+    // for now it can pass with a check mark.
+    console.log(formattedResults)
+    console.log('Fail on Errors is set to false: Passing despite errors ✅')
   } else if (formattedResults) {
     setFailedAction(formattedResults)
   } else {
@@ -157,7 +175,7 @@ const exitWithMessage = (message) => (error) => {
 }
 
 const commitLinterAction = () =>
-  getRangeForEvent()
+  getEventCommits()
     .catch(
       exitWithMessage("error trying to get list of pull request's commits"),
     )

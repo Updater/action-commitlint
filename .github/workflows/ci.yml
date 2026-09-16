@@ -9,9 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
-          node-version: '16.5.0'
+          node-version: '20.16.0'
       - uses: actions/cache@v3
         with:
           path: |
@@ -38,9 +38,9 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
-          node-version: '16.5.0'
+          node-version: '20.16.0'
       - uses: actions/cache@v3
         with:
           path: |
@@ -55,7 +55,13 @@ jobs:
           git config user.email 'github-action@users.noreply.github.com'
           git config user.name 'GitHub Action'
       - name: Update versions and changelog
-        run: npx commit-and-tag-version
+        run: |
+          # remove `"type": "module"` from package.json since `commit-and-tag-version` doesn't support it
+          sed -i '/"type": "module",/c\' package.json
+          npx commit-and-tag-version
+          # bring back `"type": "module"`
+          sed -i 's/"private": true,/"private": true,\n  "type": "module",/' package.json
+          git commit --amend --no-edit
       - name: Set VERSION env var
         run: |
           version=`node -p "require('./package.json').version"`

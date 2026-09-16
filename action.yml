@@ -5,19 +5,16 @@ inputs:
   configFile:
     description: Commitlint config file. If the file doesn't exist, config-conventional settings will be
       loaded as a fallback.
-    default: ./commitlint.config.js
-    required: false
-  firstParent:
-    description: >
-      When set to true, we follow only the first parent commit when seeing a merge commit.
-      More info in git-log docs
-      https://git-scm.com/docs/git-log#Documentation/git-log.txt---first-parent
-    default: "true"
+    default: ./commitlint.config.mjs
     required: false
   failOnWarnings:
     description: Whether you want to fail on warnings or not
     default: "false"
     required: false
+  failOnErrors:
+    description: Whether you want to fail on errors or not
+    default: "true"
+    required: true
   helpURL:
     description: Link to a page explaining your commit message convention
     default: https://github.com/conventional-changelog/commitlint/#what-is-commitlint
@@ -28,9 +25,8 @@ inputs:
     required: false
   token:
     description: >
-      Personal access token (PAT) used to interact with the GitHub API. By default, the
-      automatic token provided by GitHub is used. You can see more info about GitHub's default token
-      here:
+      Personal access token (PAT) used to interact with the GitHub API. By default, the automatic
+      token provided by GitHub is used. You can see more info about GitHub's default token here:
       https://docs.github.com/en/actions/configuring-and-managing-workflows/authenticating-with-the-github_token
     default: ${{ github.token }}
     required: false
@@ -39,7 +35,7 @@ outputs:
     description: The error and warning messages for each one of the analyzed commits
 runs:
   using: docker
-  image: docker://wagoid/commitlint-github-action:5.3.1
+  image: docker://wagoid/commitlint-github-action:6.2.1
 branding:
   icon: check-square
   color: blue
